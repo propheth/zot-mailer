@@ -1,11 +1,13 @@
 <?php
 namespace zot\mailer;
 
-require_once(dirname(__FILE__).'/MailFunction.php');
-require_once(dirname(__FILE__).'/SmtpTransport.php');
+require_once(dirname(__FILE__).'/Autoloader.php');
 
-use zot\mailer\transports\MailFunction;
-use zot\mailer\transports\SmtpTransport;
+\zot\autoloader\Autoloader::psr4("zot\\mailer\\", dirname(__FILE__));
+\zot\autoloader\Autoloader::psr4("zot\\mailer\\transport\\", dirname(__FILE__));
+
+use zot\mailer\transport\SmtpTransport;
+use zot\mailer\transport\MailFunction;
 
 class Mailer {
 	private $mailTransport;

@@ -1,9 +1,9 @@
 <?php
-namespace zot\mailer\transports;
-
-require_once(dirname(__FILE__).'/MailTransport.php');
+namespace zot\mailer\transport;
 
 use zot\mailer\MailTransport;
+
+require_once(dirname(__FILE__).'/MailTransport.php');
 
 class MailFunction implements MailTransport {
 	

@@ -1,9 +1,9 @@
 <?php
 namespace zot\mailer;
 
-use InvalidArgumentException;
-
 require_once(dirname(__FILE__).'/MultipartBuilder.php');
+
+use InvalidArgumentException;
 
 class Mail {
 	public $from;

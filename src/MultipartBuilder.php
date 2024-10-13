@@ -226,9 +226,9 @@ MimeMultipartPart::newMixed()
 	)
 	->addPart(MimeMultipartPart::newBodyPart("text/plain", "This is a plain text email message"))
 	->addPart(MimeMultipartPart::newFilePart("text/plain", MimeMultipartPart::CONTENT_DISPOSITION_ATTACHMENT, "e:\\propheth\\repo\\commerceos\\includes\\data\\export.txt", 'test.txt'))
-	->addHeader("From", "Support <support@myphpauction.com>")
-	->addHeader("To", "Test <test@myphpauction.com>")
-	->addHeader("Reply-To", "Support <support@myphpauction.com>")
+	->addHeader("From", "Dev <dev@interniaga.net>")
+	->addHeader("To", "Test <test@interniaga.net>")
+	->addHeader("Reply-To", "Dev <dev@interniaga.net>")
 	->addHeader("Subject", "Crazy MIME Multipart Email Test")
 	->build($os);
 
