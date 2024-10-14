@@ -1,18 +1,30 @@
 <?php
-namespace zot\mailer\transports;
+namespace zot\mailer\transport;
 
-require_once(dirname(__FILE__).'/MailTransport.php');
+//require_once(dirname(__FILE__).'/../../zot/core/lib/Http.php');
 
+use Exception;
 use zot\mailer\MailTransport;
 
 class SmtpTransport implements MailTransport {
 	const DEBUG = 0;
+	
+	const EXT_STARTTLS = 'STARTTLS';
+	const EXT_AUTH = 'AUTH';
+
+	const AUTH_PLAIN = 'PLAIN';
+	const AUTH_LOGIN = 'LOGIN';
+
 	const SUPPORTED_AUTH_PROTOCOLS = array('PLAIN', 'LOGIN');
+	const SUPPORTED_EXTENSIONS = array('STARTTLS', 'AUTH');
+
 	private $timeoutSecs = 60; // null value will use default_socket_timeout, negative means infinite.
 	private $sock;
 	private $host;
 	private $port;
 	private $startTlsOn;
+	private $username;
+	private $password;
 
 	public function __construct($host, $port, $username=null, $password=null) {
 		$this->host = $host;
@@ -24,20 +36,9 @@ class SmtpTransport implements MailTransport {
     public function send($mail) { 
 		$mails = is_array($mail) ? $mail : array($mail);
 
-		$this->smtpStart($this->host, $this->port, true);
-
-		$authSupported = null;
-		try {
-			$this->extensionSupported('AUTH');
-			$authSupported = true;
-		}
-		catch(\Exception $ex) {
-			$authSupported = false;
-		}
-		
-		if($authSupported) {
-			$this->smtpAuth();
-		}
+		$this->smtpStart($this->host, $this->port);
+		if($this->extensionSupported(SmtpTransport::EXT_AUTH)) {
+			$this->smtpAuth(); }
 		
 		foreach($mails as $mail1) {
 			$this->smtpMailFrom($mail1->fromEmail);
@@ -49,22 +50,22 @@ class SmtpTransport implements MailTransport {
 		$this->smtpDisconnect();
 	}
 	
-	private function smtpStart($host, $port, $autoStartTls=null) {
+	// Default to most secure available extensions
+	private function smtpStart($host, $port, $skipStartTls=null) {
 		$this->smtpConnect($host, $port);
 
-		if($autoStartTls) {
-			try {
-				$this->extensionSupported('STARTTLS');
+		if($skipStartTls) {
+			$this->smtpHelo();
+		}
+		else {
+			if($this->extensionSupported(SmtpTransport::EXT_STARTTLS)) {
 				$this->smtpStartTls();
 				$this->smtpEhlo(); // Do an EHLO after STARTTLS to prevent error.
 			}
-			catch(\Exception $ex) {
-
+			else {
+				// Fallback no STARTTLS
+				$this->smtpHelo();
 			}
-		}
-
-		if(!$this->startTlsOn) {
-			$this->smtpHelo();
 		}
 	}
 
@@ -92,7 +93,17 @@ class SmtpTransport implements MailTransport {
 	}
 
 	private function smtpEof($data) {
-		return strlen($data) >= 4 && preg_match('/^[0-9][0-9][0-9] /', $data) === 1;
+		return $data !== false && 
+			strlen($data) >= 4 && 
+			preg_match('/^[0-9][0-9][0-9](?: |\r\n)/', $data) === 1;
+			// Officially 3 digit response code<SP> but some incompliant servers 3 digit response code<CRLF>
+	}
+
+	// https://datatracker.ietf.org/doc/html/rfc5321#section-2.3.7
+	private function isReplyCode($replyLine, $replyCode) {
+		return $replyLine !== false && 
+			strlen($replyLine) >= 4 && 
+			substr($replyLine, 0, 3) == $replyCode;
 	}
 
 	private function smtpEhlo() {
@@ -100,15 +111,18 @@ class SmtpTransport implements MailTransport {
 	}
 
 	private function smtpStartTls() {
-		$this->extensionSupported('STARTTLS');
+		if(!$this->extensionSupported(SmtpTransport::EXT_STARTTLS)) {
+			throw new UnsupportedException(SmtpTransport::EXT_STARTTLS); }
+
 		$data = $this->sendClient("STARTTLS", 220);
-		if(stream_socket_enable_crypto($this->sock, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT) === true) {
-			$this->startTlsOn = true;
-		}
+		if(stream_socket_enable_crypto($this->sock, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT) !== true) {
+			throw new Exception('STARTTLS failed'); }
+		$this->startTlsOn = true;
 	}
 
 	private function availableAuthProtocols() {
-		$data = $this->extensionSupported('AUTH');
+		if(($data = $this->hasLine($this->smtpEhlo(), SmtpTransport::EXT_AUTH, 250)) === false) {
+			throw new UnsupportedException(SmtpTransport::EXT_AUTH); }
 		$authProtocols = explode(' ', $data);
 		return $authProtocols;
 	}
@@ -130,6 +144,9 @@ class SmtpTransport implements MailTransport {
 	}
 
 	private function smtpAuth() {
+		if(!$this->extensionSupported(SmtpTransport::EXT_AUTH)) {
+			throw new UnsupportedException(SmtpTransport::EXT_AUTH); }
+
 		if($this->username === null || 
 			$this->password === null) { return false; }
 
@@ -137,11 +154,11 @@ class SmtpTransport implements MailTransport {
 		foreach(self::SUPPORTED_AUTH_PROTOCOLS as $supportedAuthProtocol) {
 			if(in_array($supportedAuthProtocol, $availableAuthProtocols)) {
 				switch($supportedAuthProtocol) {
-					case 'PLAIN':
+					case SmtpTransport::AUTH_PLAIN:
 						$this->smtpAuthPlain($this->username, $this->password);
 						break 2;
 
-					case 'LOGIN':
+					case SmtpTransport::AUTH_LOGIN:
 						$this->smtpAuthLogin($this->username, $this->password);
 						break 2;
 
@@ -152,7 +169,28 @@ class SmtpTransport implements MailTransport {
 			}
 		}
 	}
+/*
+	private function smtpAuthXoauth2($username, $password, $clientId, $clientSecret) {
+		$authUrl = "https://accounts.google.com/o/oauth2/auth";
+		//$authUrl = "https://accounts.google.com/o/oauth2/token";
 
+		$resp = \Http::request2($authUrl, 'POST', "Content-Type: application/x-www-form-urlencoded", "response_type=code&client_id=780151539280-e9d77hhpab3c6u6152b7f7c032070liv.apps.googleusercontent.com&scope=https://www.googleapis.com/auth/gmail.send&redirect_uri=http://localhost");
+		var_dump($resp);die;
+
+		$basicUserPass = base64_encode($clientId.':'.$clientSecret);
+		$resp = \Http::request2($authUrl, 'POST', "Authorization: Basic $basicUserPass\r\nContent-Length: 18", "response_type=code");
+		var_dump($resp);die;
+		
+		$supportedAuths = $this->availableAuthProtocols();
+		if(in_array('XOAUTH2', $supportedAuths)) {
+			$this->sendClient('AUTH XOAUTH2', 334);
+			$data = $this->sendClient(base64_encode("user=".$username."\cAauth=Bearer ".$password."\cA\cA"), 235);
+		}
+		else {
+			throw new Exception('AUTH XOAUTH2 not supported');
+		}
+	}
+*/
 	private function smtpMailFrom($fromEmailAddr) {
 		$data = $this->sendClient("MAIL FROM:<$fromEmailAddr>", 250);
 	}
@@ -161,8 +199,39 @@ class SmtpTransport implements MailTransport {
 		$data = $this->sendClient("RCPT TO:<$toEmailAddr>", 250);
 	}
 
+	// https://datatracker.ietf.org/doc/html/rfc5321#section-4.5.2
 	private function smtpData($mail) {
 		$data = $this->sendClient("DATA", 354);
+		/*
+		$maxMemory = 5*1024*1024; // 5MB
+		$tempStream = fopen("php://temp/maxmemory:$maxMemory", 'r+');
+		$mail->writeMultipart($tempStream);
+		rewind($tempStream);
+		*/
+		//$data = stream_get_contents($tempStream);
+		//$mail->writeMultipart($this->sock);
+/*
+$data = <<<EOS
+Date: Fri, 11 Oct 2024 15:39:30 +0200
+To: dev@prophetiq.com
+From: commerceos@interniaga.net
+Subject: Forgot password
+Message-ID: <v21sl81Igp0efDtBxJDlFtqdUhq1Fdu78dlBtvFRcE@commerceos.local>
+
+Hello Alice.
+This is a test message with 5 header fields and 4 lines in the message body.
+Your friend,
+Bob
+EOS;
+*/
+/*
+		// Data is folded in the multipart message as there could be many nested messages.
+		$data = explode("\r\n", $data);
+		foreach($data as $line) {
+			fwrite($this->sock, $line."\r\n"); }
+
+		stream_copy_to_stream($tempStream, $this->sock);
+		*/
 		$mail->writeMultipart($this->sock);
 		fwrite($this->sock, "\r\n.\r\n");
 		$data = $this->readServer(250);
@@ -193,30 +262,27 @@ class SmtpTransport implements MailTransport {
 		$errCode = null;
 		$errLine = null;
 		
-		if($this->smtpConnected()) {
-			do {
-				$line = fgets($this->sock);
-				if(strlen($line) >= 4 && 
-						($smtpCode = substr($line, 0, 3)) && 
-						(int)$smtpCode === $okCode) {
-					
-				}
-				else {
-					$err = true;
-					$errCode = $smtpCode;
-					$errLine = $line;
-				}
-				
-				$data .= $line;
-			} while(!$this->smtpEof($line));
-		}
-		else {
-			throw new \ErrorException("SMTP not connected.");
-		}
+		if(!$this->smtpConnected()) {
+			throw new \ErrorException("SMTP not connected."); }
+
+		do {
+			$line = fgets($this->sock);
+			if($line === false) { 
+				$this->smtpDisconnect();
+				throw new \ErrorException("Sock error");
+			}
+
+			if(!$this->isReplyCode($line, $okCode)) {
+				$err = true;
+				$errCode = substr($line, 0, 3);
+				$errLine = $line;
+			}
+			
+			$data .= $line;
+		} while(!$this->smtpEof($line));
 
 		if($err) {
-			throw new \Exception($errLine, $errCode);
-		}
+			throw new \Exception($errLine, $errCode); }
 
 		$this->printDebug($data);
 
@@ -224,17 +290,13 @@ class SmtpTransport implements MailTransport {
 	}
 
 	private function extensionSupported($ext) {
-		$data = $this->smtpEhlo();
-		if(($data = $this->hasLine($data, $ext, 250)) !== false) {
-			return $data;
-		}
-		throw new \Exception("$ext not supported");
+		return $this->hasLine($this->smtpEhlo(), $ext, 250) !== false;
 	}
 
-	private function hasLine($serverData, $cmd, $code) {
+	private function hasLine($reply, $cmd, $code) {
 		$pattern = "/^{$code}[ -]$cmd(.*?)$/m";
 		//$this->printDebug($pattern);
-		if(preg_match($pattern, $serverData, $matches)) {
+		if(preg_match($pattern, $reply, $matches)) {
 			$line = $matches[0];
 			$line = trim($matches[1]);
 			return $line;
@@ -244,6 +306,12 @@ class SmtpTransport implements MailTransport {
 
 	private function printDebug($text) {
 		if(self::DEBUG) { print $text.PHP_EOL; }
+	}
+}
+
+class UnsupportedException extends \Exception {
+	public function __construct($extension) {
+		parent::__construct("{$extension} not supported", crc32($extension));
 	}
 }
 

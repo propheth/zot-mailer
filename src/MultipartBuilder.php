@@ -14,6 +14,18 @@ class MultipartBuilder {
 	const CONTENT_DISPOSITION_ATTACHMENT = 'attachment'; // requires user action to display
 
 	const CHARSET_UTF8 = 'utf-8';
+	const CRLF = "\r\n";
+	const LWSP = "\t";
+
+	// https://tools.ietf.org/html/rfc5321#section-4.5.3.1.6
+	// https://www.w3.org/Protocols/rfc822/3_Lexical.html
+	// 3.4.8. FOLDING LONG HEADER FIELDS
+	// "Long" is commonly interpreted to mean greater than 65 or 72 characters
+	// LWSP can be SPACE or HTAB
+	// Not including <CRLF><LWSP>
+	const MAX_LINE_LENGTH_HEADER = 70;
+	// Not including <CRLF>
+	const MAX_LINE_LENGTH_BODY = 76;
 
 	private $headers;
 	private $version;
@@ -104,46 +116,46 @@ class MultipartBuilder {
 		return $this;
 	}
 
-	public function build($outStream) {
-		$message = '';
+	private function writeHeader($outStream, $line, $foldWidth=self::MAX_LINE_LENGTH_HEADER) {
+		if($foldWidth !== null && isset($line[$foldWidth])) {
+			// Remove final separator
+			$line = substr(chunk_split($line, $foldWidth, self::CRLF.self::LWSP), 0, -3); }
+		fwrite($outStream, $line.self::CRLF);
+	}
 
+	public function build($outStream) {
 		if($this->version !== null) {
-			fwrite($outStream, "MIME-Version: $this->version\r\n"); }
+			$this->writeHeader($outStream, "MIME-Version: $this->version"); }
 
 		if($this->contentType !== null) {
-			fwrite($outStream, "Content-Type: $this->contentType");
+			$contentTypeHeader = "Content-Type: $this->contentType";
 			if($this->contentType === self::CONTENT_TYPE_MIXED || 
 					$this->contentType === self::CONTENT_TYPE_ALTERNATIVE) {
-				fwrite($outStream, "; boundary=$this->boundary");
+				$contentTypeHeader .= "; boundary=$this->boundary";
 			}
-			fwrite($outStream, "\r\n");
+			$this->writeHeader($outStream, $contentTypeHeader);
 		}
 
 		if($this->contentDisposition !== null) {
-			fwrite($outStream, "Content-Disposition: {$this->contentDisposition['type']}");
+			$contentDispositionHeader = "Content-Disposition: {$this->contentDisposition['type']}";
 			if($this->contentDisposition['filename'] !== null) {
-				fwrite($outStream, "; filename=\"{$this->contentDisposition['filename']}\"");
-			}
-			fwrite($outStream, "\r\n");
+				$contentDispositionHeader .= "; filename=\"{$this->contentDisposition['filename']}\""; }
+			$this->writeHeader($outStream, $contentDispositionHeader);
 		}
 
 		if($this->contentTransferEncoding !== null) {
-			fwrite($outStream, "Content-Transfer-Encoding: $this->contentTransferEncoding\r\n");
+			$this->writeHeader($outStream, "Content-Transfer-Encoding: $this->contentTransferEncoding");
 		}
 
 		foreach($this->headers as $name => $value) {
-			fwrite($outStream, "$name: $value\r\n");
+			$this->writeHeader($outStream, "$name: $value");
 		}
 		
 		fwrite($outStream, "\r\n");
 
 		// preamble if root
-		if($this->body !== null) {
-			$this->writeBody($outStream);
-		}
-		else if($this->filePath !== null) {
-			$this->writeFilePathContents($outStream);
-		}
+		if($this->body !== null) { $this->writeBody($outStream); }
+		else if($this->filePath !== null) { $this->writeFilePathContents($outStream); }
 
 		foreach($this->parts as $part) {
 			fwrite($outStream, "\r\n--$this->boundary\r\n");
@@ -155,8 +167,6 @@ class MultipartBuilder {
 			fwrite($outStream, "\r\n--$this->boundary--");
 			// epilogue
 		}
-
-		return $message;
 	}
 
 	private function writeFilePathContents($outStream) {
@@ -182,7 +192,7 @@ class MultipartBuilder {
 		}
 	}
 
-	private function writeBody($outStream) {
+	private function writeBody($outStream, $foldWidth=self::MAX_LINE_LENGTH_BODY) {
 		if($this->contentTransferEncoding === self::CONTENT_TRANSFER_ENCODING_BASE64) {
 			//https://www.w3.org/Protocols/rfc1341/5_Content-Transfer-Encoding.html
 			fwrite($outStream, chunk_split(base64_encode($this->body)));
@@ -193,7 +203,11 @@ class MultipartBuilder {
 			fwrite($outStream, $this->body);
 		}
 		else {
-			fwrite($outStream, $this->body);
+			$body = $this->body;
+			if($foldWidth !== null && isset($body[$foldWidth])) {
+				// Remove final separator
+				$body = substr(chunk_split($body, $foldWidth, self::CRLF), 0, -2); }
+			fwrite($outStream, $body);
 		}
 	}
 

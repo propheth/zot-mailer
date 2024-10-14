@@ -1,13 +1,12 @@
 <?php
 namespace zot\mailer\test;
 
-use zot\mailer\transports\SmtpTransport;
+use zot\mailer\transport\SmtpTransport;
 use zot\mailer\Mail;
 use zot\test\Test;
 
 require_once(__DIR__.'/Test.php');
-require_once(__DIR__.'/../src/Mail.php');
-require_once(__DIR__.'/../src/SmtpTransport.php');
+require_once(__DIR__.'/../src/Mailer.php');
 
 class MailingTests extends Test {
 	private $plainMail;
@@ -52,7 +51,7 @@ class MailingTests extends Test {
 
 	public function testPlainMailWithAttachments() {
 		try {
-			$this->smtpTransport->send($this->mailWithAttachments);
+			$this->smtpTransport->send($this->mailWithAttachment);
 			$this->assertTrue(true);
 		}
 		catch(\ErrorException $ex) {
