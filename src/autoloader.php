@@ -10,8 +10,7 @@ namespace zot;
  * or use more memory.
  * Auto loaded dependencies are only loaded as you use the library and the classes are 
  * actually used. 
- * NOTE: Not sure if the `use` keyword at the top actually loads all the classes
- * there and there.
+ * NOTE: The `use` keyword at the top does not cause autoload to trigger
  * 
  * Example usage:
  * require_once(PATH."/autoloader.php");
