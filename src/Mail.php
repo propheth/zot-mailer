@@ -22,6 +22,7 @@ class Mail {
 	public $bodyPlain;
 	public $bodyHtml;
 	public $attachments;
+	public $messageId;
 
 	public function __construct($to, $subject, $bodyPlain, $bodyHtml=null) {
 		if(($toEmail = self::parseEmail($to)) === false) { 
@@ -79,6 +80,11 @@ class Mail {
 		return $this;
 	}
 
+	public function setMessageId($messageId) {
+		$this->messageId = $messageId;
+		return $this;
+	}
+
 	public function setBodyPlain($bodyPlain) {
 		$this->bodyPlain = $bodyPlain;
 	}
@@ -101,6 +107,8 @@ class Mail {
 	}
 
 	public static function parseEmail($mailbox) {
+		if($mailbox === null) { return false; }
+
 		$invalidChars = '\\s<>@,|()!#$%:;"`\\[\\]\\\\';
 		$patterns = array(
 			'/([^<>,]*?)\\s+<([^'.$invalidChars.']+@[^'.$invalidChars.']+?)>/',
@@ -129,6 +137,8 @@ class Mail {
 
 		$multipart->addPart($alternative);
 
+		$multipart->addHeader("Date", date('r'));
+
 		if($this->from) {
 			$multipart->addHeader("From", $this->from);
 			if($this->replyTo) {
@@ -151,6 +161,10 @@ class Mail {
 		if($this->subject) {
 			$multipart->addHeader("Subject", $this->subject, MultipartBuilder::CHARSET_UTF8); }
 
+		// Required. Some SMTP servers will not sent email without Message-ID.
+		$multipart->addHeader("Message-ID", $this->messageId ?? 
+			$this->generateMessageId($this->from ?? 'postmaster@localhost'));
+
 		foreach($this->attachments as $attachment) {
 			$multipart->addPart(MultipartBuilder::newFilePart(
 				$attachment['contentType'], 
@@ -160,6 +174,13 @@ class Mail {
 		}
 
 		$multipart->build($outStream);
+	}
+
+	private function generateMessageId($from) {
+		return sprintf("<%s.%s@%s>", 
+			base_convert(round(microtime(true)), 10, 36), 
+			base_convert(bin2hex(random_bytes(8)), 16, 36), 
+			substr($from, stripos($from, '@') ?: 0));
 	}
 }
 
